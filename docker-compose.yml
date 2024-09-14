@@ -1,25 +1,90 @@
 version: "3.7"
+
 services:
   postgres:
-    image: postgres:14
+    image: postgres:15
+    container_name: yape-postgres
     ports:
       - "5432:5432"
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=yape
+    networks:
+      - yape-net
+
   zookeeper:
-    image: confluentinc/cp-zookeeper:5.5.3
+    image: confluentinc/cp-zookeeper:7.2.1
+    container_name: yape-zookeeper
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
-  kafka:
-    image: confluentinc/cp-enterprise-kafka:5.5.3
-    depends_on: [zookeeper]
-    environment:
-      KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      KAFKA_BROKER_ID: 1
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_JMX_PORT: 9991
+      ZOOKEEPER_TICK_TIME: 2000
     ports:
-      - 9092:9092
+      - "2181:2181"
+    networks:
+      - yape-net
+
+  kafka:
+    image: confluentinc/cp-kafka:7.2.1
+    container_name: yape-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9094:9094"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,OUTSIDE://0.0.0.0:9094
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,OUTSIDE://localhost:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,OUTSIDE:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_JMX_PORT: 9991
+    networks:
+      - yape-net
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    depends_on:
+      - kafka
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: "docker-kafka-cluster"
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: "kafka:9092"
+      KAFKA_CLUSTERS_0_ZOOKEEPER: "zookeeper:2181"
+      KAFKA_CLUSTERS_0_PROPERTIES_SECURITY_PROTOCOL: "PLAINTEXT"
+    networks:
+      - yape-net
+
+  node-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: node-app
+    depends_on:
+      - postgres
+      - kafka
+      - kafka-ui
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - APP_PORT=3000
+      - APP_HOST=0.0.0.0
+      - APP_DB_HOST=yape-postgres
+      - APP_DB_PORT=5432
+      - APP_DB_USER=postgres
+      - APP_DB_PASSWORD=postgres
+      - APP_DB_NAME=yape
+      - KAFKA_BROKER=yape-kafka:9092
+    command: [ "npm", "start" ]
+    networks:
+      - yape-net
+
+networks:
+  yape-net:
+    driver: bridge
